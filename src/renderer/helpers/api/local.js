@@ -76,6 +76,47 @@ export async function getLocalPlaylist(id) {
 }
 
 /**
+ * @param {Playlist} playlist
+ * @returns {Playlist|null} null when no valid playlist can be found (e.g. `empty continuation response`)
+ */
+export async function getLocalPlaylistContinuation(playlist) {
+  try {
+    return await playlist.getContinuation()
+  } catch (error) {
+    // Youtube can provide useless continuation data
+    if (!error.message.includes('Got empty continuation response.')) {
+      // Re-throw unhandled error
+      throw error
+    }
+
+    return null
+  }
+}
+
+/**
+ * Callback for adding two numbers.
+ *
+ * @callback untilEndOfLocalPlayListCallback
+ * @param {Playlist} playlist
+ */
+
+/**
+ * @param {Playlist} playlist
+ * @param {untilEndOfLocalPlayListCallback} callback
+ * @param {object} options
+ * @param {boolean} options.runCallbackOnceFirst
+ */
+export async function untilEndOfLocalPlayList(playlist, callback, options = { runCallbackOnceFirst: true }) {
+  if (options.runCallbackOnceFirst) { callback(playlist) }
+
+  while (playlist != null && playlist.has_continuation) {
+    playlist = await getLocalPlaylistContinuation(playlist)
+
+    if (playlist != null) { callback(playlist) }
+  }
+}
+
+/**
  * @param {string} location
  * @param {'default'|'music'|'gaming'|'movies'} tab
  * @param {import('youtubei.js').Mixins.TabbedFeed|null} instance
@@ -192,17 +233,24 @@ export async function getLocalChannelId(url) {
   try {
     const innertube = await createInnertube()
 
-    // resolveURL throws an error if the URL doesn't exist
-    const navigationEndpoint = await innertube.resolveURL(url)
+    // Resolve URL and allow 1 redirect, as YouTube should just do 1
+    // We want to avoid an endless loop
+    for (let i = 0; i < 2; i++) {
+      // resolveURL throws an error if the URL doesn't exist
+      const navigationEndpoint = await innertube.resolveURL(url)
 
-    if (navigationEndpoint.metadata.page_type === 'WEB_PAGE_TYPE_CHANNEL') {
-      return navigationEndpoint.payload.browseId
-    } else {
-      return null
+      if (navigationEndpoint.metadata.page_type === 'WEB_PAGE_TYPE_CHANNEL') {
+        return navigationEndpoint.payload.browseId
+      } else if (navigationEndpoint.metadata.page_type === 'WEB_PAGE_TYPE_UNKNOWN' && navigationEndpoint.payload.url?.startsWith('https://www.youtube.com/')) {
+        // handle redirects like https://www.youtube.com/@wanderbots, which resolves to https://www.youtube.com/Wanderbots, which we need to resolve again
+        url = navigationEndpoint.payload.url
+      } else {
+        return null
+      }
     }
-  } catch {
-    return null
-  }
+  } catch { }
+
+  return null
 }
 
 /**
@@ -286,6 +334,36 @@ export async function getLocalChannelLiveStreams(id) {
   }
 }
 
+export async function getLocalChannelCommunity(id) {
+  const innertube = await createInnertube()
+
+  try {
+    const response = await innertube.actions.execute(Endpoints.BrowseEndpoint.PATH, Endpoints.BrowseEndpoint.build({
+      browse_id: id,
+      params: 'Egljb21tdW5pdHnyBgQKAkoA'
+      // protobuf for the community tab (this is the one that YouTube uses,
+      // it has some empty fields in the protobuf but it doesn't work if you remove them)
+    }))
+
+    const communityTab = new YT.Channel(null, response)
+
+    // if the channel doesn't have a community tab, YouTube returns the home tab instead
+    // so we need to check that we got the right tab
+    if (communityTab.current_tab?.endpoint.metadata.url?.endsWith('/community')) {
+      return parseLocalCommunityPosts(communityTab.posts)
+    } else {
+      return []
+    }
+  } catch (error) {
+    console.error(error)
+    if (error instanceof Utils.ChannelError) {
+      return null
+    } else {
+      throw error
+    }
+  }
+}
+
 /**
  * @param {import('youtubei.js').YTNodes.Video[]} videos
  * @param {Misc.Author} author
@@ -308,9 +386,6 @@ export function parseLocalChannelVideos(videos, author) {
  */
 export function parseLocalChannelShorts(shorts, author) {
   return shorts.map(short => {
-    // unfortunately the only place with the duration is the accesibility string
-    const duration = parseShortDuration(short.accessibility_label, short.id)
-
     return {
       type: 'video',
       videoId: short.id,
@@ -318,65 +393,9 @@ export function parseLocalChannelShorts(shorts, author) {
       author: author.name,
       authorId: author.id,
       viewCount: parseLocalSubscriberCount(short.views.text),
-      lengthSeconds: isNaN(duration) ? '' : duration
+      lengthSeconds: ''
     }
   })
-}
-
-/**
- * Shorts can only be up to 60 seconds long, so we only need to handle seconds and minutes
- * Of course this is YouTube, so are edge cases that don't match the docs, like example 3 taken from LTT
- *
- * https://support.google.com/youtube/answer/10059070?hl=en
- *
- * Example input strings:
- * - These mice keep getting WEIRDER... - 59 seconds - play video
- * - How Low Can Our Resolution Go? - 1 minute - play video
- * - I just found out about Elon. #SHORTS - 1 minute, 1 second - play video
- * @param {string} accessibilityLabel
- * @param {string} videoId only used for error logging
- */
-function parseShortDuration(accessibilityLabel, videoId) {
-  // we want to count from the end of the array,
-  // as it's possible that the title could contain a `-` too
-  const timeString = accessibilityLabel.split('-').at(-2)
-
-  if (typeof timeString === 'undefined') {
-    console.error(`Failed to parse local API short duration from accessibility label. video ID: ${videoId}, text: "${accessibilityLabel}"`)
-    return NaN
-  }
-
-  let duration = 0
-
-  const matches = timeString.matchAll(/(\d+) (second|minute)s?/g)
-
-  // matchAll returns an iterator, which doesn't have a length property
-  // so we need to check if it's empty this way instead
-  let validDuration = false
-
-  for (const match of matches) {
-    let number = parseInt(match[1])
-
-    if (isNaN(number) || match[2].length === 0) {
-      validDuration = false
-      break
-    }
-
-    validDuration = true
-
-    if (match[2] === 'minute') {
-      number *= 60
-    }
-
-    duration += number
-  }
-
-  if (!validDuration) {
-    console.error(`Failed to parse local API short duration from accessibility label. video ID: ${videoId}, text: "${accessibilityLabel}"`)
-    return NaN
-  }
-
-  return duration
 }
 
 /**
@@ -404,9 +423,13 @@ export function parseLocalListPlaylist(playlist, author = undefined) {
       channelName = playlist.author.name
       channelId = playlist.author.id
     }
-  } else {
+  } else if (author) {
     channelName = author.name
     channelId = author.id
+  } else if (playlist.author?.name) {
+    // auto-generated album playlists don't have an author
+    // so in search results, the author text is "Playlist" and doesn't have a link or channel ID
+    channelName = playlist.author.name
   }
 
   return {
@@ -434,7 +457,7 @@ function handleSearchResponse(response) {
 
   const results = response.results
     .filter((item) => {
-      return item.type === 'Video' || item.type === 'Channel' || item.type === 'Playlist'
+      return item.type === 'Video' || item.type === 'Channel' || item.type === 'Playlist' || item.type === 'HashtagTile'
     })
     .map((item) => parseListItem(item))
 
@@ -453,15 +476,12 @@ export function parseLocalPlaylistVideo(video) {
     /** @type {import('youtubei.js').YTNodes.ReelItem} */
     const short = video
 
-    // unfortunately the only place with the duration is the accesibility string
-    const duration = parseShortDuration(video.accessibility_label, short.id)
-
     return {
       type: 'video',
       videoId: short.id,
       title: short.title.text,
       viewCount: parseLocalSubscriberCount(short.views.text),
-      lengthSeconds: isNaN(duration) ? '' : duration
+      lengthSeconds: ''
     }
   } else {
     /** @type {import('youtubei.js').YTNodes.PlaylistVideo} */
@@ -578,6 +598,17 @@ function parseListItem(item) {
         videos,
         handle,
         descriptionShort: channel.description_snippet.text
+      }
+    }
+    case 'HashtagTile': {
+      /** @type {import('youtubei.js').YTNodes.HashtagTile} */
+      const hashtag = item
+
+      return {
+        type: 'hashtag',
+        title: hashtag.hashtag.text,
+        videoCount: hashtag.hashtag_video_count.isEmpty() ? null : parseLocalSubscriberCount(hashtag.hashtag_video_count.text),
+        channelCount: hashtag.hashtag_channel_count.isEmpty() ? null : parseLocalSubscriberCount(hashtag.hashtag_channel_count.text)
       }
     }
     case 'Playlist': {
@@ -789,6 +820,7 @@ export function parseLocalComment(comment, commentThread = undefined) {
     dataType: 'local',
     authorLink: comment.author.id,
     author: comment.author.name,
+    authorId: comment.author.id,
     authorThumb: comment.author.best_thumbnail.url,
     isPinned: comment.is_pinned,
     isOwner: comment.author_is_channel_owner,
@@ -867,9 +899,29 @@ export function parseLocalSubscriberCount(text) {
 
 /**
  * Parse community posts
+ * @param {import('youtubei.js').YTNodes.BackstagePost[] | import('youtubei.js').YTNodes.SharedPost[] | import('youtubei.js').YTNodes.Post[] } posts
+ */
+export function parseLocalCommunityPosts(posts) {
+  const foundIds = []
+  // `posts` includes the SharedPost's attached post for some reason so we need to filter that out.
+  // see: https://github.com/FreeTubeApp/FreeTube/issues/3252#issuecomment-1546675781
+  // we don't currently support SharedPost's so that is also filtered out
+  for (const post of posts) {
+    if (post.type === 'SharedPost') {
+      foundIds.push(post.original_post.id, post.id)
+    }
+  }
+
+  return posts.filter(post => {
+    return !foundIds.includes(post.id)
+  }).map(parseLocalCommunityPost)
+}
+
+/**
+ * Parse community post
  * @param {import('youtubei.js').YTNodes.BackstagePost} post
  */
-export function parseLocalCommunityPost(post) {
+function parseLocalCommunityPost(post) {
   let replyCount = post.action_buttons?.reply_button?.text ?? null
   if (replyCount !== null) {
     replyCount = parseLocalSubscriberCount(post?.action_buttons.reply_button.text)

@@ -52,9 +52,7 @@
                 v-if="subCount !== null && !hideChannelSubscriptions"
                 class="channelSubCount"
               >
-                {{ formattedSubCount }}
-                <span v-if="subCount === 1">{{ $t("Channel.Subscriber") }}</span>
-                <span v-else>{{ $t("Channel.Subscribers") }}</span>
+                {{ $tc('Global.Counts.Subscriber Count', subCount, { count: formattedSubCount }) }}
               </p>
             </div>
           </div>
@@ -188,7 +186,7 @@
               @click="changeTab('community')"
               @keydown.left.right.enter.space="changeTab('community', $event)"
             >
-              {{ $t("Channel.Community.Community").toUpperCase() }}
+              {{ $t("Global.Community").toUpperCase() }}
             </div>
             <!-- eslint-disable-next-line vuejs-accessibility/interactive-supports-focus -->
             <div
@@ -225,51 +223,50 @@
         id="aboutPanel"
         :description="description"
         :joined="joined"
-        :views="views"
+        :views="viewCount"
+        :videos="videoCount"
         :location="location"
         :tags="tags"
         :related-channels="relatedChannels"
       />
-      <ft-select
-        v-if="showVideoSortBy"
-        v-show="currentTab === 'videos' && latestVideos.length > 0"
-        class="sortSelect"
-        :value="videoLiveSelectValues[0]"
-        :select-names="videoLiveSelectNames"
-        :select-values="videoLiveSelectValues"
-        :placeholder="$t('Search Filters.Sort By.Sort By')"
-        @change="videoSortBy = $event"
-      />
-      <ft-select
-        v-if="!hideChannelShorts && showShortSortBy"
-        v-show="currentTab === 'shorts' && latestShorts.length > 0"
-        class="sortSelect"
-        :value="shortSelectValues[0]"
-        :select-names="shortSelectNames"
-        :select-values="shortSelectValues"
-        :placeholder="$t('Search Filters.Sort By.Sort By')"
-        @change="shortSortBy = $event"
-      />
-      <ft-select
-        v-if="!hideLiveStreams && showLiveSortBy"
-        v-show="currentTab === 'live' && latestLive.length > 0"
-        class="sortSelect"
-        :value="videoLiveSelectValues[0]"
-        :select-names="videoLiveSelectNames"
-        :select-values="videoLiveSelectValues"
-        :placeholder="$t('Search Filters.Sort By.Sort By')"
-        @change="liveSortBy = $event"
-      />
-      <ft-select
-        v-if="!hideChannelPlaylists && showPlaylistSortBy"
-        v-show="currentTab === 'playlists' && latestPlaylists.length > 0"
-        class="sortSelect"
-        :value="playlistSelectValues[0]"
-        :select-names="playlistSelectNames"
-        :select-values="playlistSelectValues"
-        :placeholder="$t('Search Filters.Sort By.Sort By')"
-        @change="playlistSortBy = $event"
-      />
+      <div class="select-container">
+        <ft-select
+          v-if="showVideoSortBy"
+          v-show="currentTab === 'videos' && latestVideos.length > 0"
+          :value="videoLiveSelectValues[0]"
+          :select-names="videoLiveSelectNames"
+          :select-values="videoLiveSelectValues"
+          :placeholder="$t('Search Filters.Sort By.Sort By')"
+          @change="videoSortBy = $event"
+        />
+        <ft-select
+          v-if="!hideChannelShorts && showShortSortBy"
+          v-show="currentTab === 'shorts' && latestShorts.length > 0"
+          :value="shortSelectValues[0]"
+          :select-names="shortSelectNames"
+          :select-values="shortSelectValues"
+          :placeholder="$t('Search Filters.Sort By.Sort By')"
+          @change="shortSortBy = $event"
+        />
+        <ft-select
+          v-if="!hideLiveStreams && showLiveSortBy"
+          v-show="currentTab === 'live' && latestLive.length > 0"
+          :value="videoLiveSelectValues[0]"
+          :select-names="videoLiveSelectNames"
+          :select-values="videoLiveSelectValues"
+          :placeholder="$t('Search Filters.Sort By.Sort By')"
+          @change="liveSortBy = $event"
+        />
+        <ft-select
+          v-if="!hideChannelPlaylists && showPlaylistSortBy"
+          v-show="currentTab === 'playlists' && latestPlaylists.length > 0"
+          :value="playlistSelectValues[0]"
+          :select-names="playlistSelectNames"
+          :select-values="playlistSelectValues"
+          :placeholder="$t('Search Filters.Sort By.Sort By')"
+          @change="playlistSortBy = $event"
+        />
+      </div>
       <ft-loader
         v-if="isElementListLoading"
       />

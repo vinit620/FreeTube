@@ -4,6 +4,7 @@ import { mapActions, mapMutations } from 'vuex'
 import FtButton from '../ft-button/ft-button.vue'
 import FtFlexBox from '../ft-flex-box/ft-flex-box.vue'
 import FtPrompt from '../ft-prompt/ft-prompt.vue'
+import FtToggleSwitch from '../ft-toggle-switch/ft-toggle-switch.vue'
 import { MAIN_PROFILE_ID } from '../../../constants'
 
 import { calculateColorLuminance, getRandomColor } from '../../helpers/colors'
@@ -27,7 +28,8 @@ export default defineComponent({
     'ft-settings-section': FtSettingsSection,
     'ft-button': FtButton,
     'ft-flex-box': FtFlexBox,
-    'ft-prompt': FtPrompt
+    'ft-prompt': FtPrompt,
+    'ft-toggle-switch': FtToggleSwitch,
   },
   data: function () {
     return {
@@ -38,7 +40,9 @@ export default defineComponent({
         'youtube',
         'youtubeold',
         'newpipe'
-      ]
+      ],
+
+      shouldExportPlaylistForOlderVersions: false,
     }
   },
   computed: {
@@ -54,8 +58,8 @@ export default defineComponent({
     allPlaylists: function () {
       return this.$store.getters.getAllPlaylists
     },
-    historyCache: function () {
-      return this.$store.getters.getHistoryCache
+    historyCacheSorted: function () {
+      return this.$store.getters.getHistoryCacheSorted
     },
     exportSubscriptionsPromptNames: function () {
       const exportFreeTube = this.$t('Settings.Data Settings.Export FreeTube')
@@ -159,7 +163,7 @@ export default defineComponent({
           const message = this.$t('Settings.Data Settings.Profile object has insufficient data, skipping item')
           showToast(message)
         } else {
-          if (profileObject.name === 'All Channels' || profileObject._id === MAIN_PROFILE_ID) {
+          if (profileObject._id === MAIN_PROFILE_ID) {
             this.primaryProfile.subscriptions = this.primaryProfile.subscriptions.concat(profileObject.subscriptions)
             this.primaryProfile.subscriptions = this.primaryProfile.subscriptions.filter((sub, index) => {
               const profileIndex = this.primaryProfile.subscriptions.findIndex((x) => {
@@ -698,20 +702,28 @@ export default defineComponent({
       textDecode.pop()
 
       const requiredKeys = [
-        '_id',
         'author',
         'authorId',
         'description',
         'isLive',
         'lengthSeconds',
-        'paid',
         'published',
         'timeWatched',
         'title',
         'type',
         'videoId',
         'viewCount',
-        'watchProgress'
+        'watchProgress',
+      ]
+
+      const optionalKeys = [
+        // `_id` absent if marked as watched manually
+        '_id',
+        'lastViewedPlaylistId',
+      ]
+
+      const ignoredKeys = [
+        'paid',
       ]
 
       textDecode.forEach((history) => {
@@ -723,15 +735,19 @@ export default defineComponent({
         const historyObject = {}
 
         Object.keys(historyData).forEach((key) => {
-          if (!requiredKeys.includes(key)) {
-            showToast(`Unknown data key: ${key}`)
-          } else {
+          if (requiredKeys.includes(key) || optionalKeys.includes(key)) {
             historyObject[key] = historyData[key]
+          } else if (!ignoredKeys.includes(key)) {
+            showToast(`Unknown data key: ${key}`)
           }
+          // Else do not import the key
         })
 
-        if (Object.keys(historyObject).length < (requiredKeys.length - 2)) {
+        const historyObjectKeysSet = new Set(Object.keys(historyObject))
+        const missingKeys = requiredKeys.filter(x => !historyObjectKeysSet.has(x))
+        if (missingKeys.length > 0) {
           showToast(this.$t('Settings.Data Settings.History object has insufficient data, skipping item'))
+          console.error('Missing Keys: ', missingKeys, historyData)
         } else {
           this.updateHistory(historyObject)
         }
@@ -815,7 +831,6 @@ export default defineComponent({
           historyObject.lengthSeconds = null
           historyObject.watchProgress = 1
           historyObject.isLive = false
-          historyObject.paid = false
 
           this.updateHistory(historyObject)
         }
@@ -825,7 +840,7 @@ export default defineComponent({
     },
 
     exportHistory: async function () {
-      const historyDb = this.historyCache.map((historyEntry) => {
+      const historyDb = this.historyCacheSorted.map((historyEntry) => {
         return JSON.stringify(historyEntry)
       }).join('\n') + '\n'
       const dateStr = getTodayDateStrLocalTimezone()
@@ -871,13 +886,28 @@ export default defineComponent({
 
       const requiredKeys = [
         'playlistName',
-        'videos'
+        'videos',
       ]
 
       const optionalKeys = [
+        'description',
+        'createdAt',
+      ]
+
+      const ignoredKeys = [
         '_id',
+        'title',
+        'type',
         'protected',
-        'removeOnWatched'
+        'lastUpdatedAt',
+        'lastPlayedAt',
+        'removeOnWatched',
+
+        'thumbnail',
+        'channelName',
+        'channelId',
+        'playlistId',
+        'videoCount',
       ]
 
       const requiredVideoKeys = [
@@ -885,15 +915,14 @@ export default defineComponent({
         'title',
         'author',
         'authorId',
-        'published',
         'lengthSeconds',
         'timeAdded',
-        'isLive',
-        'paid',
-        'type'
+
+        // `playlistItemId` should be optional for backward compatibility
+        // 'playlistItemId',
       ]
 
-      playlists.forEach(async (playlistData) => {
+      playlists.forEach((playlistData) => {
         // We would technically already be done by the time the data is parsed,
         // however we want to limit the possibility of malicious data being sent
         // to the app, so we'll only grab the data we need here.
@@ -901,58 +930,71 @@ export default defineComponent({
         const playlistObject = {}
 
         Object.keys(playlistData).forEach((key) => {
-          if (!requiredKeys.includes(key) && !optionalKeys.includes(key)) {
+          if ([requiredKeys, optionalKeys, ignoredKeys].every((ks) => !ks.includes(key))) {
             const message = `${this.$t('Settings.Data Settings.Unknown data key')}: ${key}`
             showToast(message)
           } else if (key === 'videos') {
             const videoArray = []
             playlistData.videos.forEach((video) => {
-              let hasAllKeys = true
-              requiredVideoKeys.forEach((videoKey) => {
-                if (!Object.keys(video).includes(videoKey)) {
-                  hasAllKeys = false
-                }
-              })
+              const videoPropertyKeys = Object.keys(video)
+              const videoObjectHasAllRequiredKeys = requiredVideoKeys.every((k) => videoPropertyKeys.includes(k))
 
-              if (hasAllKeys) {
+              if (videoObjectHasAllRequiredKeys) {
                 videoArray.push(video)
               }
             })
 
             playlistObject[key] = videoArray
-          } else {
+          } else if (!ignoredKeys.includes(key)) {
+            // Do nothing for keys to be ignored
             playlistObject[key] = playlistData[key]
           }
         })
 
-        const objectKeys = Object.keys(playlistObject)
+        const playlistObjectKeys = Object.keys(playlistObject)
+        const playlistObjectHasAllRequiredKeys = requiredKeys.every((k) => playlistObjectKeys.includes(k))
 
-        if ((objectKeys.length < requiredKeys.length) || playlistObject.videos.length === 0) {
-          const message = this.$t('Settings.Data Settings.Playlist insufficient data', { playlist: playlistData.playlistName })
-          showToast(message)
-        } else {
+        if (playlistObjectHasAllRequiredKeys) {
           const existingPlaylist = this.allPlaylists.find((playlist) => {
             return playlist.playlistName === playlistObject.playlistName
           })
 
           if (existingPlaylist !== undefined) {
             playlistObject.videos.forEach((video) => {
-              const videoExists = existingPlaylist.videos.some((x) => {
-                return x.videoId === video.videoId
-              })
+              let videoExists = false
+              if (video.playlistItemId != null) {
+                // Find by `playlistItemId` if present
+                videoExists = existingPlaylist.videos.some((x) => {
+                  // Allow duplicate (by videoId) videos to be added
+                  return x.videoId === video.videoId && x.playlistItemId === video.playlistItemId
+                })
+              } else {
+                // Older playlist exports have no `playlistItemId` but have `timeAdded`
+                // Which might be duplicate for copied playlists with duplicate `videoId`
+                videoExists = existingPlaylist.videos.some((x) => {
+                  // Allow duplicate (by videoId) videos to be added
+                  return x.videoId === video.videoId && x.timeAdded === video.timeAdded
+                })
+              }
 
               if (!videoExists) {
+                // Keep original `timeAdded` value
                 const payload = {
-                  playlistName: existingPlaylist.playlistName,
-                  videoData: video
+                  _id: existingPlaylist._id,
+                  videoData: video,
                 }
 
                 this.addVideo(payload)
               }
             })
+            // Update playlist's `lastUpdatedAt`
+            this.updatePlaylist({ _id: existingPlaylist._id })
           } else {
             this.addPlaylist(playlistObject)
           }
+        } else {
+          const message = this.$t('Settings.Data Settings.Playlist insufficient data', { playlist: playlistData.playlistName })
+          showToast(message)
         }
       })
 
@@ -974,6 +1016,55 @@ export default defineComponent({
       }
 
       await this.promptAndWriteToFile(options, JSON.stringify(this.allPlaylists), 'All playlists has been successfully exported')
+    },
+
+    exportPlaylistsForOlderVersionsSometimes: function () {
+      if (this.shouldExportPlaylistForOlderVersions) {
+        this.exportPlaylistsForOlderVersions()
+      } else {
+        this.exportPlaylists()
+      }
+    },
+
+    exportPlaylistsForOlderVersions: async function () {
+      const dateStr = getTodayDateStrLocalTimezone()
+      const exportFileName = 'freetube-playlists-as-single-favorites-playlist-' + dateStr + '.db'
+
+      const options = {
+        defaultPath: exportFileName,
+        filters: [
+          {
+            name: 'Database File',
+            extensions: ['db']
+          }
+        ]
+      }
+
+      const favoritesPlaylistData = {
+        playlistName: 'Favorites',
+        protected: true,
+        videos: [],
+      }
+
+      this.allPlaylists.forEach((playlist) => {
+        playlist.videos.forEach((video) => {
+          const videoAlreadyAdded = favoritesPlaylistData.videos.some((v) => {
+            return v.videoId === video.videoId
+          })
+          if (videoAlreadyAdded) { return }
+
+          favoritesPlaylistData.videos.push(
+            Object.assign({
+              // The "required" keys during import (but actually unused) in older versions
+              isLive: false,
+              paid: false,
+              published: '',
+            }, video)
+          )
+        })
+      })
+
+      await this.promptAndWriteToFile(options, JSON.stringify([favoritesPlaylistData]), 'All playlists has been successfully exported')
     },
 
     convertOldFreeTubeFormatToNew(oldData) {
@@ -1141,7 +1232,8 @@ export default defineComponent({
       'updateShowProgressBar',
       'updateHistory',
       'addPlaylist',
-      'addVideo'
+      'addVideo',
+      'updatePlaylist',
     ]),
 
     ...mapMutations([

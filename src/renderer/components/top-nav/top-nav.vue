@@ -14,8 +14,9 @@
         @keydown.enter.prevent="toggleSideNav"
       />
       <font-awesome-icon
-        ref="historyArrowBack"
-        class="navBackIcon navIcon fa-arrow-left"
+        :aria-disabled="isArrowBackwardDisabled"
+        class="navIcon"
+        :class="{ arrowBackwardDisabled: isArrowBackwardDisabled}"
         :icon="['fas', 'arrow-left']"
         role="button"
         tabindex="0"
@@ -24,8 +25,9 @@
         @keydown.enter.prevent="historyBack"
       />
       <font-awesome-icon
-        ref="historyArrowForward"
-        class="navForwardIcon navIcon fa-arrow-right"
+        :aria-disabled="isArrowForwardDisabled"
+        class="navIcon"
+        :class="{ arrowForwardDisabled: isArrowForwardDisabled}"
         :icon="['fas', 'arrow-right']"
         role="button"
         tabindex="0"
@@ -54,12 +56,13 @@
       <div
         v-if="!hideHeaderLogo"
         class="logo"
+        dir="ltr"
         role="link"
         tabindex="0"
-        :title="$t('Subscriptions.Subscriptions')"
-        @click="navigate('subscriptions')"
-        @keydown.space.prevent="navigate('subscriptions')"
-        @keydown.enter.prevent="navigate('subscriptions')"
+        :title="headerLogoTitle"
+        @click="navigate(landingPage)"
+        @keydown.space.prevent="navigate(landingPage)"
+        @keydown.enter.prevent="navigate(landingPage)"
       >
         <div
           class="logoIcon"

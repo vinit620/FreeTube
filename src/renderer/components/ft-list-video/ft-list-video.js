@@ -26,6 +26,14 @@ export default defineComponent({
       type: String,
       default: null
     },
+    playlistType: {
+      type: String,
+      default: null
+    },
+    playlistItemId: {
+      type: String,
+      default: null
+    },
     playlistIndex: {
       type: Number,
       default: null
@@ -54,6 +62,22 @@ export default defineComponent({
       type: Boolean,
       default: false
     },
+    alwaysShowAddToPlaylistButton: {
+      type: Boolean,
+      default: false,
+    },
+    canMoveVideoUp: {
+      type: Boolean,
+      default: false,
+    },
+    canMoveVideoDown: {
+      type: Boolean,
+      default: false,
+    },
+    canRemoveFromPlaylist: {
+      type: Boolean,
+      default: false,
+    },
   },
   data: function () {
     return {
@@ -64,6 +88,7 @@ export default defineComponent({
       viewCount: 0,
       parsedViewCount: '',
       uploadedTime: '',
+      lengthSeconds: 0,
       duration: '',
       description: '',
       watched: false,
@@ -72,12 +97,17 @@ export default defineComponent({
       isLive: false,
       isUpcoming: false,
       isPremium: false,
-      hideViews: false
+      hideViews: false,
+      addToPlaylistPromptCloseCallback: null,
     }
   },
   computed: {
-    historyCache: function () {
-      return this.$store.getters.getHistoryCache
+    historyEntry: function () {
+      return this.$store.getters.getHistoryCacheById[this.id]
+    },
+
+    historyEntryExists: function () {
+      return typeof this.historyEntry !== 'undefined'
     },
 
     listType: function () {
@@ -88,6 +118,14 @@ export default defineComponent({
       return this.$store.getters.getThumbnailPreference
     },
 
+    blurThumbnails: function () {
+      return this.$store.getters.getBlurThumbnails
+    },
+
+    blurThumbnailsStyle: function () {
+      return this.blurThumbnails ? 'blur(20px)' : null
+    },
+
     backendPreference: function () {
       return this.$store.getters.getBackendPreference
     },
@@ -96,16 +134,37 @@ export default defineComponent({
       return this.$store.getters.getCurrentInvidiousInstance
     },
 
+    showPlaylists: function () {
+      return !this.$store.getters.getHidePlaylists
+    },
+
     inHistory: function () {
       // When in the history page, showing relative dates isn't very useful.
       // We want to show the exact date instead
       return this.$route.name === 'history'
     },
 
+    inUserPlaylist: function () {
+      return this.playlistTypeFinal === 'user' || this.selectedUserPlaylist != null
+    },
+
+    selectedUserPlaylist: function () {
+      if (this.playlistIdFinal == null) { return null }
+      if (this.playlistIdFinal === '') { return null }
+
+      return this.$store.getters.getPlaylist(this.playlistIdFinal)
+    },
+
+    playlistSharable() {
+      // `playlistId` can be undefined
+      // User playlist ID should not be shared
+      return this.playlistIdFinal && this.playlistIdFinal.length !== 0 && !this.inUserPlaylist
+    },
+
     invidiousUrl: function () {
       let videoUrl = `${this.currentInvidiousInstance}/watch?v=${this.id}`
       // `playlistId` can be undefined
-      if (this.playlistIdFinal && this.playlistIdFinal.length !== 0) {
+      if (this.playlistSharable) {
         // `index` seems can be ignored
         videoUrl += `&list=${this.playlistIdFinal}`
       }
@@ -118,8 +177,7 @@ export default defineComponent({
 
     youtubeUrl: function () {
       let videoUrl = `https://www.youtube.com/watch?v=${this.id}`
-      // `playlistId` can be undefined
-      if (this.playlistIdFinal && this.playlistIdFinal.length !== 0) {
+      if (this.playlistSharable) {
         // `index` seems can be ignored
         videoUrl += `&list=${this.playlistIdFinal}`
       }
@@ -127,8 +185,7 @@ export default defineComponent({
     },
 
     youtubeShareUrl: function () {
-      // `playlistId` can be undefined
-      if (this.playlistIdFinal && this.playlistIdFinal.length !== 0) {
+      if (this.playlistSharable) {
         // `index` seems can be ignored
         return `https://youtu.be/${this.id}?list=${this.playlistIdFinal}`
       }
@@ -144,7 +201,11 @@ export default defineComponent({
     },
 
     progressPercentage: function () {
-      return (this.watchProgress / this.data.lengthSeconds) * 100
+      if (typeof this.lengthSeconds !== 'number') {
+        return 0
+      }
+
+      return (this.watchProgress / this.lengthSeconds) * 100
     },
 
     hideSharingActions: function() {
@@ -216,8 +277,25 @@ export default defineComponent({
             {
               label: this.$t('Video.Open Channel in Invidious'),
               value: 'openInvidiousChannel'
+            },
+            {
+              type: 'divider'
             }
           )
+
+          const hiddenChannels = JSON.parse(this.$store.getters.getChannelsHidden)
+          const channelShouldBeHidden = hiddenChannels.some(c => c === this.channelId)
+          if (channelShouldBeHidden) {
+            options.push({
+              label: this.$t('Video.Unhide Channel'),
+              value: 'unhideChannel'
+            })
+          } else {
+            options.push({
+              label: this.$t('Video.Hide Channel'),
+              value: 'hideChannel'
+            })
+          }
         }
       }
 
@@ -239,6 +317,8 @@ export default defineComponent({
           return `${baseUrl}/vi/${this.id}/mq2.jpg`
         case 'end':
           return `${baseUrl}/vi/${this.id}/mq3.jpg`
+        case 'hidden':
+          return require('../../assets/img/thumbnail_placeholder.svg')
         default:
           return `${baseUrl}/vi/${this.id}/mqdefault.jpg`
       }
@@ -250,22 +330,6 @@ export default defineComponent({
 
     addWatchedStyle: function () {
       return this.watched && !this.inHistory
-    },
-
-    favoritesPlaylist: function () {
-      return this.$store.getters.getFavorites
-    },
-
-    inFavoritesPlaylist: function () {
-      const index = this.favoritesPlaylist.videos.findIndex((video) => {
-        return video.videoId === this.id
-      })
-
-      return index !== -1
-    },
-
-    favoriteIconTheme: function () {
-      return this.inFavoritesPlaylist ? 'base favorite' : 'base'
     },
 
     externalPlayer: function () {
@@ -303,30 +367,57 @@ export default defineComponent({
       }
     },
 
-    historyIndex: function() {
-      return this.historyCache.findIndex((video) => {
-        return video.videoId === this.id
-      })
-    },
-
-    playlistIdFinal: function () {
+    playlistIdTypePairFinal() {
       if (this.playlistId) {
-        return this.playlistId
+        return {
+          playlistId: this.playlistId,
+          playlistType: this.playlistType,
+          playlistItemId: this.playlistItemId,
+        }
       }
 
       // Get playlist ID from history ONLY if option enabled
       if (!this.showVideoWithLastViewedPlaylist) { return }
       if (!this.saveVideoHistoryWithLastViewedPlaylist) { return }
-      const historyIndex = this.historyIndex
-      if (historyIndex === -1) {
-        return undefined
-      }
 
-      return this.historyCache[historyIndex].lastViewedPlaylistId
+      return {
+        playlistId: this.historyEntry?.lastViewedPlaylistId,
+        playlistType: this.historyEntry?.lastViewedPlaylistType,
+        playlistItemId: this.historyEntry?.lastViewedPlaylistItemId,
+      }
+    },
+
+    playlistIdFinal: function () {
+      return this.playlistIdTypePairFinal?.playlistId
+    },
+    playlistTypeFinal: function () {
+      return this.playlistIdTypePairFinal?.playlistType
+    },
+    playlistItemIdFinal: function () {
+      return this.playlistIdTypePairFinal?.playlistItemId
+    },
+
+    watchPageLinkTo() {
+      // For `router-link` attribute `to`
+      return {
+        path: `/watch/${this.id}`,
+        query: this.watchPageLinkQuery,
+      }
+    },
+    watchPageLinkQuery() {
+      const query = {}
+      if (this.playlistIdFinal) { query.playlistId = this.playlistIdFinal }
+      if (this.playlistTypeFinal) { query.playlistType = this.playlistTypeFinal }
+      if (this.playlistItemIdFinal) { query.playlistItemId = this.playlistItemIdFinal }
+      return query
     },
 
     currentLocale: function () {
       return this.$i18n.locale.replace('_', '-')
+    },
+
+    showAddToPlaylistPrompt: function () {
+      return this.$store.getters.getShowAddToPlaylistPrompt
     },
 
     useDeArrowTitles: function () {
@@ -335,11 +426,18 @@ export default defineComponent({
 
     deArrowCache: function () {
       return this.$store.getters.getDeArrowCache[this.id]
-    }
+    },
   },
   watch: {
-    historyIndex() {
+    historyEntry() {
       this.checkIfWatched()
+    },
+    showAddToPlaylistPrompt(value) {
+      if (value) { return }
+      // Execute on prompt close
+
+      if (this.addToPlaylistPromptCloseCallback == null) { return }
+      this.addToPlaylistPromptCloseCallback()
     },
   },
   created: function () {
@@ -355,7 +453,7 @@ export default defineComponent({
       const videoId = this.id
       const data = await deArrowData(this.id)
       const cacheData = { videoId, title: null }
-      if (Array.isArray(data?.titles) && data.titles.length > 0 && (data.titles[0].locked || data.titles[0].votes > 0)) {
+      if (Array.isArray(data?.titles) && data.titles.length > 0 && (data.titles[0].locked || data.titles[0].votes >= 0)) {
         cacheData.title = data.titles[0].title
       }
 
@@ -366,7 +464,7 @@ export default defineComponent({
     handleExternalPlayer: function () {
       this.$emit('pause-player')
 
-      this.openInExternalPlayer({
+      const payload = {
         watchProgress: this.watchProgress,
         playbackRate: this.defaultPlayback,
         videoId: this.id,
@@ -375,19 +473,22 @@ export default defineComponent({
         playlistIndex: this.playlistIndex,
         playlistReverse: this.playlistReverse,
         playlistShuffle: this.playlistShuffle,
-        playlistLoop: this.playlistLoop
-      })
+        playlistLoop: this.playlistLoop,
+      }
+      // Only play video in non playlist mode when user playlist detected
+      if (this.inUserPlaylist) {
+        Object.assign(payload, {
+          playlistId: null,
+          playlistIndex: null,
+          playlistReverse: null,
+          playlistShuffle: null,
+          playlistLoop: null,
+        })
+      }
+      this.openInExternalPlayer(payload)
 
       if (this.saveWatchedProgress && !this.watched) {
         this.markAsWatched()
-      }
-    },
-
-    toggleSave: function () {
-      if (this.inFavoritesPlaylist) {
-        this.removeFromPlaylist()
-      } else {
-        this.addToPlaylist()
       }
     },
 
@@ -430,6 +531,12 @@ export default defineComponent({
         case 'openInvidiousChannel':
           openExternalLink(this.invidiousChannelUrl)
           break
+        case 'hideChannel':
+          this.hideChannel(this.channelName, this.channelId)
+          break
+        case 'unhideChannel':
+          this.unhideChannel(this.channelName, this.channelId)
+          break
       }
     },
 
@@ -441,9 +548,11 @@ export default defineComponent({
       this.channelName = this.data.author ?? null
       this.channelId = this.data.authorId ?? null
 
-      if (this.data.isRSS && this.historyIndex !== -1) {
-        this.duration = formatDurationAsTimestamp(this.historyCache[this.historyIndex].lengthSeconds)
+      if ((this.data.lengthSeconds === '' || this.data.lengthSeconds === '0:00') && this.historyEntryExists) {
+        this.lengthSeconds = this.historyEntry.lengthSeconds
+        this.duration = formatDurationAsTimestamp(this.historyEntry.lengthSeconds)
       } else {
+        this.lengthSeconds = this.data.lengthSeconds
         this.duration = formatDurationAsTimestamp(this.data.lengthSeconds)
       }
 
@@ -528,22 +637,26 @@ export default defineComponent({
     },
 
     checkIfWatched: function () {
-      const historyIndex = this.historyIndex
-
-      if (historyIndex !== -1) {
+      if (this.historyEntryExists) {
         this.watched = true
+
+        const historyEntry = this.historyEntry
+
         if (this.saveWatchedProgress) {
           // For UX consistency, no progress reading if writing disabled
-          this.watchProgress = this.historyCache[historyIndex].watchProgress
+          this.watchProgress = historyEntry.watchProgress
         }
 
-        if (this.historyCache[historyIndex].published !== '') {
-          const videoPublished = this.historyCache[historyIndex].published
+        if (historyEntry.published !== '') {
+          const videoPublished = historyEntry.published
           const videoPublishedDate = new Date(videoPublished)
           this.publishedText = videoPublishedDate.toLocaleDateString()
         } else {
           this.publishedText = ''
         }
+      } else {
+        this.watched = false
+        this.watchProgress = 0
       }
     },
 
@@ -560,7 +673,6 @@ export default defineComponent({
         watchProgress: 0,
         timeWatched: new Date().getTime(),
         isLive: false,
-        paid: false,
         type: 'video'
       }
       this.updateHistory(videoData)
@@ -578,49 +690,51 @@ export default defineComponent({
       this.watchProgress = 0
     },
 
-    addToPlaylist: function () {
+    togglePlaylistPrompt: function () {
       const videoData = {
         videoId: this.id,
         title: this.title,
         author: this.channelName,
         authorId: this.channelId,
-        published: '',
         description: this.description,
         viewCount: this.viewCount,
         lengthSeconds: this.data.lengthSeconds,
-        timeAdded: new Date().getTime(),
-        isLive: false,
-        paid: false,
-        type: 'video'
       }
 
-      const payload = {
-        playlistName: 'Favorites',
-        videoData: videoData
+      this.showAddToPlaylistPromptForManyVideos({ videos: [videoData] })
+
+      // Focus when prompt closed
+      this.addToPlaylistPromptCloseCallback = () => {
+        // Run once only
+        this.addToPlaylistPromptCloseCallback = null
+
+        // `thumbnailLink` is a `router-link`
+        // `focus()` can only be called on the actual element
+        this.$refs.addToPlaylistIcon?.$el?.focus()
       }
-
-      this.addVideo(payload)
-
-      showToast(this.$t('Video.Video has been saved'))
     },
 
-    removeFromPlaylist: function () {
-      const payload = {
-        playlistName: 'Favorites',
-        videoId: this.id
-      }
+    hideChannel: function(channelName, channelId) {
+      const hiddenChannels = JSON.parse(this.$store.getters.getChannelsHidden)
+      hiddenChannels.push(channelId)
+      this.updateChannelsHidden(JSON.stringify(hiddenChannels))
 
-      this.removeVideo(payload)
+      showToast(this.$t('Channel Hidden', { channel: channelName }))
+    },
 
-      showToast(this.$t('Video.Video has been removed from your saved list'))
+    unhideChannel: function(channelName, channelId) {
+      const hiddenChannels = JSON.parse(this.$store.getters.getChannelsHidden)
+      this.updateChannelsHidden(JSON.stringify(hiddenChannels.filter(c => c !== channelId)))
+
+      showToast(this.$t('Channel Unhidden', { channel: channelName }))
     },
 
     ...mapActions([
       'openInExternalPlayer',
       'updateHistory',
       'removeFromHistory',
-      'addVideo',
-      'removeVideo'
+      'updateChannelsHidden',
+      'showAddToPlaylistPromptForManyVideos',
     ])
   }
 })

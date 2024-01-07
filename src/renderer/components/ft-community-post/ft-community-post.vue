@@ -8,16 +8,43 @@
     <div
       class="author-div"
     >
-      <img
+      <template
         v-if="authorThumbnails.length > 0"
-        :src="getBestQualityImage(authorThumbnails)"
-        class="communityThumbnail"
-        alt=""
       >
+        <router-link
+          v-if="authorId"
+          :to="`/channel/${authorId}`"
+          tabindex="-1"
+          aria-hidden="true"
+        >
+          <img
+            :src="getBestQualityImage(authorThumbnails)"
+            class="communityThumbnail"
+            alt=""
+          >
+        </router-link>
+        <img
+          v-else
+          :src="getBestQualityImage(authorThumbnails)"
+          class="communityThumbnail"
+          alt=""
+        >
+      </template>
       <p
         class="authorName"
       >
-        {{ author }}
+        <router-link
+          v-if="authorId"
+          :to="`/channel/${authorId}`"
+          class="authorNameLink"
+        >
+          {{ author }}
+        </router-link>
+        <template
+          v-else
+        >
+          {{ author }}
+        </template>
       </p>
       <p
         class="publishedText"
@@ -29,19 +56,27 @@
       class="postText"
       v-html="postText"
     />
-    <tiny-slider
-      v-if="type === 'multiImage' && postContent.content.length > 0"
-      v-bind="tinySliderOptions"
-      class="slider"
-    >
-      <img
-        v-for="(img, index) in postContent.content"
-        :key="index"
-        :src="getBestQualityImage(img)"
-        class="communityImage tns-lazy-img"
-        alt=""
+    <div class="sliderContainer">
+      <swiper-container
+        v-if="type === 'multiImage' && postContent.content.length > 0"
+        ref="swiperContainer"
+        init="false"
+        class="slider"
       >
-    </tiny-slider>
+        <swiper-slide
+          v-for="(img, index) in postContent.content"
+          :key="index"
+          lazy="true"
+        >
+          <img
+            :src="getBestQualityImage(img)"
+            class="communityImage"
+            alt=""
+            loading="lazy"
+          >
+        </swiper-slide>
+      </swiper-container>
+    </div>
     <div
       v-if="type === 'image' && postContent.content.length > 0"
     >
@@ -91,4 +126,3 @@
 
 <script src="./ft-community-post.js" />
 <style scoped src="./ft-community-post.scss" lang="scss" />
-<style src="./slider-style.css" lang="css" />

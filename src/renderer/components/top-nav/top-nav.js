@@ -25,6 +25,8 @@ export default defineComponent({
       searchFilterValueChanged: false,
       historyIndex: 1,
       isForwardOrBack: false,
+      isArrowBackwardDisabled: true,
+      isArrowForwardDisabled: true,
       searchSuggestionsDataList: [],
       lastSuggestionQuery: ''
     }
@@ -36,6 +38,20 @@ export default defineComponent({
 
     hideHeaderLogo: function () {
       return this.$store.getters.getHideHeaderLogo
+    },
+
+    landingPage: function () {
+      return this.$store.getters.getLandingPage
+    },
+
+    headerLogoTitle: function () {
+      return this.$t('Go to page',
+        {
+          page: this.$t(this.$router.getRoutes()
+            .find((route) => route.path === '/' + this.landingPage)
+            .meta.title
+          )
+        })
     },
 
     enableSearchSuggestions: function () {
@@ -205,7 +221,14 @@ export default defineComponent({
 
     focusSearch: function () {
       if (!this.hideSearchBar) {
-        this.$refs.searchInput.focus()
+        // In order to prevent Klipper's "Synchronize contents of the clipboard
+        // and the selection" feature from being triggered when running
+        // Chromium on KDE Plasma, it seems both focus() focus and
+        // select() have to be called asynchronously (see issue #2019).
+        setTimeout(() => {
+          this.$refs.searchInput.focus()
+          this.$refs.searchInput.select()
+        }, 0)
       }
     },
 
@@ -280,8 +303,8 @@ export default defineComponent({
     navigateHistory: function () {
       if (!this.isForwardOrBack) {
         this.historyIndex = window.history.length
-        this.$refs.historyArrowBack.classList.remove('fa-arrow-left')
-        this.$refs.historyArrowForward.classList.add('fa-arrow-right')
+        this.isArrowBackwardDisabled = false
+        this.isArrowForwardDisabled = true
       } else {
         this.isForwardOrBack = false
       }
@@ -293,9 +316,9 @@ export default defineComponent({
 
       if (this.historyIndex > 1) {
         this.historyIndex--
-        this.$refs.historyArrowForward.classList.remove('fa-arrow-right')
+        this.isArrowForwardDisabled = false
         if (this.historyIndex === 1) {
-          this.$refs.historyArrowBack.classList.add('fa-arrow-left')
+          this.isArrowBackwardDisabled = true
         }
       }
     },
@@ -306,10 +329,10 @@ export default defineComponent({
 
       if (this.historyIndex < window.history.length) {
         this.historyIndex++
-        this.$refs.historyArrowBack.classList.remove('fa-arrow-left')
+        this.isArrowBackwardDisabled = false
 
         if (this.historyIndex === window.history.length) {
-          this.$refs.historyArrowForward.classList.add('fa-arrow-right')
+          this.isArrowForwardDisabled = true
         }
       }
     },

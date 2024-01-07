@@ -8,6 +8,7 @@ import FtFlexBox from '../ft-flex-box/ft-flex-box.vue'
 import FtButton from '../ft-button/ft-button.vue'
 
 import debounce from 'lodash.debounce'
+import allLocales from '../../../../static/locales/activeLocales.json'
 import { showToast } from '../../helpers/utils'
 
 export default defineComponent({
@@ -26,20 +27,6 @@ export default defineComponent({
         'invidious',
         'local'
       ],
-      defaultPageNames: [
-        'Subscriptions',
-        'Trending',
-        'Most Popular',
-        'Playlists',
-        'History'
-      ],
-      defaultPageValues: [
-        'subscriptions',
-        'trending',
-        'mostPopular',
-        'playlists',
-        'history'
-      ],
       viewTypeValues: [
         'grid',
         'list'
@@ -48,12 +35,23 @@ export default defineComponent({
         '',
         'start',
         'middle',
-        'end'
+        'end',
+        'hidden',
+        'blur'
       ],
       externalLinkHandlingValues: [
         '',
         'openLinkAfterPrompt',
         'doNothing'
+      ],
+      includedDefaultPageNames: [
+        'subscriptions',
+        'subscribedChannels',
+        'trending',
+        'popular',
+        'userPlaylists',
+        'history',
+        'settings'
       ]
     }
   },
@@ -67,16 +65,47 @@ export default defineComponent({
     backendFallback: function () {
       return this.$store.getters.getBackendFallback
     },
+    blurThumbnails: function () {
+      return this.$store.getters.getBlurThumbnails
+    },
     checkForUpdates: function () {
       return this.$store.getters.getCheckForUpdates
     },
     checkForBlogPosts: function () {
       return this.$store.getters.getCheckForBlogPosts
     },
+    hidePlaylists: function () {
+      return this.$store.getters.getHidePlaylists
+    },
+    hidePopularVideos: function () {
+      return this.$store.getters.getHidePopularVideos
+    },
+    hideTrendingVideos: function () {
+      return this.$store.getters.getHideTrendingVideos
+    },
+    defaultPages: function () {
+      let includedPageNames = this.includedDefaultPageNames
+      if (this.hideTrendingVideos) includedPageNames = includedPageNames.filter((pageName) => pageName !== 'trending')
+      if (this.hidePlaylists) includedPageNames = includedPageNames.filter((pageName) => pageName !== 'userPlaylists')
+      if (!(!this.hidePopularVideos && (this.backendFallback || this.backendPreference === 'invidious'))) includedPageNames = includedPageNames.filter((pageName) => pageName !== 'popular')
+      return this.$router.getRoutes().filter((route) => includedPageNames.includes(route.name))
+    },
+    defaultPageNames: function () {
+      return this.defaultPages.map((route) => this.$t(route.meta.title))
+    },
+    defaultPageValues: function () {
+      // avoid Vue parsing issues by excluding '/' from path values
+      return this.defaultPages.map((route) => route.path.substring(1))
+    },
     backendPreference: function () {
       return this.$store.getters.getBackendPreference
     },
     landingPage: function () {
+      const landingPage = this.$store.getters.getLandingPage
+      // invalidate landing page selection & restore to default value if no longer valid
+      if (!this.defaultPageValues.includes(landingPage)) {
+        this.updateLandingPage('subscriptions')
+      }
       return this.$store.getters.getLandingPage
     },
     region: function () {
@@ -86,7 +115,7 @@ export default defineComponent({
       return this.$store.getters.getListType
     },
     thumbnailPreference: function () {
-      return this.$store.getters.getThumbnailPreference
+      return this.blurThumbnails ? 'blur' : this.$store.getters.getThumbnailPreference
     },
     currentLocale: function () {
       return this.$store.getters.getCurrentLocale
@@ -107,7 +136,7 @@ export default defineComponent({
     localeOptions: function () {
       return [
         'system',
-        ...this.$i18n.allLocales
+        ...allLocales
       ]
     },
 
@@ -137,7 +166,9 @@ export default defineComponent({
         this.$t('Settings.General Settings.Thumbnail Preference.Default'),
         this.$t('Settings.General Settings.Thumbnail Preference.Beginning'),
         this.$t('Settings.General Settings.Thumbnail Preference.Middle'),
-        this.$t('Settings.General Settings.Thumbnail Preference.End')
+        this.$t('Settings.General Settings.Thumbnail Preference.End'),
+        this.$t('Settings.General Settings.Thumbnail Preference.Hidden'),
+        this.$t('Settings.General Settings.Thumbnail Preference.Blur')
       ]
     },
 
@@ -200,6 +231,11 @@ export default defineComponent({
       }
     },
 
+    handleThumbnailPreferenceChange: function (value) {
+      this.updateBlurThumbnails(value === 'blur')
+      this.updateThumbnailPreference(value)
+    },
+
     ...mapMutations([
       'setCurrentInvidiousInstance'
     ]),
@@ -207,6 +243,7 @@ export default defineComponent({
     ...mapActions([
       'updateEnableSearchSuggestions',
       'updateBackendFallback',
+      'updateBlurThumbnails',
       'updateCheckForUpdates',
       'updateCheckForBlogPosts',
       'updateBarColor',

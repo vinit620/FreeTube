@@ -1,4 +1,5 @@
-import i18n from '../../i18n/index'
+import i18n, { loadLocale } from '../../i18n/index'
+import allLocales from '../../../../static/locales/activeLocales.json'
 import { MAIN_PROFILE_ID, IpcChannels, SyncEvents } from '../../../constants'
 import { DBSettingHandlers } from '../../../datastores/handlers/index'
 import { getSystemLocale, showToast } from '../../helpers/utils'
@@ -161,6 +162,7 @@ const defaultSideEffectsTriggerId = settingId =>
 /*****/
 
 const state = {
+  allSettingsSectionsExpandedByDefault: false,
   autoplayPlaylists: true,
   autoplayVideos: true,
   backendFallback: process.env.IS_ELECTRON,
@@ -182,7 +184,7 @@ const state = {
   disableSmoothScrolling: false,
   displayVideoPlayButton: true,
   enableSearchSuggestions: true,
-  enableSubtitles: true,
+  enableSubtitlesByDefault: false,
   enterFullscreenOnDisplayRotate: false,
   externalLinkHandling: '',
   externalPlayer: '',
@@ -199,6 +201,7 @@ const state = {
   hideChannelShorts: false,
   hideChannelSubscriptions: false,
   hideCommentLikes: false,
+  hideCommentPhotos: false,
   hideComments: false,
   hideFeaturedChannels: false,
   channelsHidden: '[]',
@@ -214,6 +217,7 @@ const state = {
   hideSubscriptionsVideos: false,
   hideSubscriptionsShorts: false,
   hideSubscriptionsLive: false,
+  hideSubscriptionsCommunity: false,
   hideTrendingVideos: false,
   hideUnsubscribeButton: false,
   hideUpcomingPremieres: false,
@@ -226,6 +230,7 @@ const state = {
   landingPage: 'subscriptions',
   listType: 'grid',
   maxVideoPlaybackRate: 3,
+  onlyShowLatestFromChannel: false,
   playNextVideo: false,
   proxyHostname: '127.0.0.1',
   proxyPort: '9050',
@@ -272,6 +277,7 @@ const state = {
     skip: 'doNothing'
   },
   thumbnailPreference: '',
+  blurThumbnails: false,
   useProxy: false,
   useRssFeeds: false,
   useSponsorBlock: false,
@@ -279,6 +285,7 @@ const state = {
   videoPlaybackRateMouseScroll: false,
   videoSkipMouseScroll: false,
   videoPlaybackRateInterval: 0.25,
+  downloadAskPath: true,
   downloadFolderPath: '',
   downloadBehavior: 'download',
   enableScreenshot: false,
@@ -304,7 +311,7 @@ const stateWithSideEffects = {
       if (value === 'system') {
         const systemLocaleName = (await getSystemLocale()).replace('-', '_') // ex: en_US
         const systemLocaleLang = systemLocaleName.split('_')[0] // ex: en
-        const targetLocaleOptions = i18n.allLocales.filter((locale) => { // filter out other languages
+        const targetLocaleOptions = allLocales.filter((locale) => { // filter out other languages
           const localeLang = locale.replace('-', '_').split('_')[0]
           return localeLang.includes(systemLocaleLang)
         }).sort((a, b) => {
@@ -338,7 +345,7 @@ const stateWithSideEffects = {
         }
       }
 
-      await i18n.loadLocale(targetLocale)
+      await loadLocale(targetLocale)
 
       i18n.locale = targetLocale
       await dispatch('getRegionData', {
@@ -467,7 +474,8 @@ const customActions = {
           break
 
         case SyncEvents.GENERAL.DELETE_ALL:
-          commit('setHistoryCache', [])
+          commit('setHistoryCacheSorted', [])
+          commit('setHistoryCacheById', {})
           break
 
         default:
@@ -496,8 +504,24 @@ const customActions = {
 
     ipcRenderer.on(IpcChannels.SYNC_PLAYLISTS, (_, { event, data }) => {
       switch (event) {
+        case SyncEvents.GENERAL.CREATE:
+          commit('addPlaylists', data)
+          break
+
+        case SyncEvents.GENERAL.DELETE:
+          commit('removePlaylist', data)
+          break
+
+        case SyncEvents.GENERAL.UPSERT:
+          commit('upsertPlaylistToList', data)
+          break
+
         case SyncEvents.PLAYLISTS.UPSERT_VIDEO:
           commit('addVideo', data)
+          break
+
+        case SyncEvents.PLAYLISTS.UPSERT_VIDEOS:
+          commit('addVideos', data)
           break
 
         case SyncEvents.PLAYLISTS.DELETE_VIDEO:
